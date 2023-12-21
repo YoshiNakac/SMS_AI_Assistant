@@ -18,6 +18,20 @@ app.use(
   })
 )
 
+// Import the ngrok package
+const ngrok = require('ngrok');
+
+// Anonymous async function to set up ngrok tunnel
+(async function () {
+  // Use ngrok to establish a tunnel to the specified port
+  // Replace process.env['ngrokToken'] with your actual ngrok authentication token
+  // Replace port with the actual port your server is running on
+  const url = await ngrok.connect({ authtoken: process.env['ngrokToken'], addr: port });
+
+  // Log the ngrok-generated public URL to the console
+  console.log('Ngrok Tunnel is established. Public URL:', url);
+})();
+
 
 
 // Import the OpenAI library
@@ -27,9 +41,15 @@ const openai = new OpenAI({
   apiKey: process.env['OPENAI_API_KEY']
 })
 
+// Define a route for the root URL '/'
+app.get('/', (req, res) => {
+  res.send('Hello World!'); // Send a response when the root URL is accessed
+});
+
+
 // Define a route for handling incoming WhatsApp messages
 app.post('/whatsAppIncomingMessage', async (req, res) => {
-  
+
   // Create a new instance of MessagingResponse to handle Twilio messages
   const twiml = new MessagingResponse()
 
@@ -60,7 +80,7 @@ app.post('/whatsAppIncomingMessage', async (req, res) => {
 
   // Update the cookie with the latest threadId
   res.cookie('sThread', oAssistantResponce.sThread, ['Path=/']);
-  
+
   // Set the response headers and send the TwiML response
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.status(200).end(twiml.toString());
@@ -92,7 +112,7 @@ app.post('/runAssistant', async (req, res) => {
   res.send(oResp)
 })
 
-async function runAssistant (sThread, sMessage, sAssistant) {
+async function runAssistant(sThread, sMessage, sAssistant) {
   // Check if it's a new conversation or an existing thread
   if (!sThread) {
     let oThread = await openai.beta.threads.create()
@@ -123,7 +143,7 @@ async function runAssistant (sThread, sMessage, sAssistant) {
 }
 
 // Define a function to wait for a run to complete
-async function waitForRunComplete (sThreadId, sRunId) {
+async function waitForRunComplete(sThreadId, sRunId) {
   while (true) {
     const oRun = await openai.beta.threads.runs.retrieve(sThreadId, sRunId)
     if (
