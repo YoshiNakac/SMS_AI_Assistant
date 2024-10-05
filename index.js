@@ -2,7 +2,7 @@
 const express = require('express') // Express framework for building web applications
 const app = express() // Initialize an Express application
 const port = 3000 // Define the port number on which the server will listen
-const MessagingResponse = require('twilio').twiml.MessagingResponse; // // Import the MessagingResponse module from the 'twilio' package
+const MessagingResponse = require('twilio').twiml.MessagingResponse; // Import the MessagingResponse module from the 'twilio' package
 const cookieParser = require('cookie-parser') // Import and use the cookie-parser middleware
 app.use(cookieParser());
 
@@ -24,15 +24,10 @@ const ngrok = require('ngrok');
 // Anonymous async function to set up ngrok tunnel
 (async function () {
   // Use ngrok to establish a tunnel to the specified port
-  // Replace process.env['ngrokToken'] with your actual ngrok authentication token
-  // Replace port with the actual port your server is running on
   const url = await ngrok.connect({ authtoken: process.env['ngrokToken'], addr: port });
-
   // Log the ngrok-generated public URL to the console
   console.log('Ngrok Tunnel is established. Public URL:', url);
 })();
-
-
 
 // Import the OpenAI library
 const OpenAI = require('openai')
@@ -47,21 +42,20 @@ app.get('/', (req, res) => {
 });
 
 
+
 // Define a route for handling incoming WhatsApp messages
 app.post('/whatsAppIncomingMessage', async (req, res) => {
+  const twiml = new MessagingResponse() // Twilio Messaging Response
+  const body = req.body // Incoming message body
 
-  // Create a new instance of MessagingResponse to handle Twilio messages
-  const twiml = new MessagingResponse()
+  console.log(req.body);
 
-  // Extract the incoming message and cookies from the request body
-  const body = req.body
-  const incomingMessage = body.Body
-  const cookies = req.cookies
 
-  // Initialize a variable to store the threadId (conversation container)
+
+  const incomingMessage = body.Body // Text of the incoming message
+  const cookies = req.cookies // Check for cookies
   let sThread = ''
 
-  // Check if cookies contain a threadId; if yes, assign it to the variable
   if (cookies && cookies.sThread) {
     sThread = cookies.sThread
   }
@@ -70,70 +64,53 @@ app.post('/whatsAppIncomingMessage', async (req, res) => {
   let oAssistantResponce = await runAssistant(
     sThread,
     incomingMessage,
-    process.env['assistant']// add assistant to .env
-
+    process.env['assistant_id'] // Pass the assistant_id from .env
   )
 
-  // Create a Twilio message with the response from OpenAI Assistant
   const message = twiml.message()
   message.body(oAssistantResponce.threadMessages.data[0].content[0].text.value)
 
-  // Update the cookie with the latest threadId
   res.cookie('sThread', oAssistantResponce.sThread, ['Path=/']);
-
-  // Set the response headers and send the TwiML response
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.status(200).end(twiml.toString());
-
 })
 
 // Define an endpoint to create a new assistant
 app.post('/createAssistant', async (req, res) => {
-  // Use the OpenAI API to create a new assistant
   const assistant = await openai.beta.assistants.create({
-    name: 'Melody Maker', // Name of the assistant
-    description:
-      'A versatile lyricist for all music genres, inspiring creativity', // Description of the assistant
-    model: 'gpt-4-1106-preview', // The model used by the assistant
-    instructions:
-      'Melody Maker is a creative assistant specialized in songwriting...', // Detailed instructions for the assistant
-    tools: [] // Additional tools for the assistant (if any)
+    name: 'Melody Maker',
+    description: 'A versatile lyricist for all music genres, inspiring creativity',
+    model: 'gpt-4',
+    instructions: 'Melody Maker is a creative assistant specialized in songwriting...',
+    tools: []
   })
 
-  res.send(assistant) // Send the created assistant object as a response
+  res.send(assistant)
 })
 
 // Add an endpoint to run the assistant
 app.post('/runAssistant', async (req, res) => {
-  let body = req.body // Get the request body
-
+  let body = req.body
   let oResp = runAssistant(body.sThread, body.sMessage, body.sAssistant)
-  // Send the thread messages and thread ID as a response
   res.send(oResp)
 })
 
 async function runAssistant(sThread, sMessage, sAssistant) {
-  // Check if it's a new conversation or an existing thread
   if (!sThread) {
     let oThread = await openai.beta.threads.create()
     sThread = oThread.id
   }
 
-  // Add a message to the thread
   await openai.beta.threads.messages.create(sThread, {
     role: 'user',
     content: sMessage
   })
 
-  // Run the assistant with the provided thread
   let run = await openai.beta.threads.runs.create(sThread, {
     assistant_id: sAssistant
   })
 
-  // Wait for the run to complete
   await waitForRunComplete(sThread, run.id)
-
-  // Retrieve messages from the thread
   const threadMessages = await openai.beta.threads.messages.list(sThread)
 
   return {
@@ -142,20 +119,13 @@ async function runAssistant(sThread, sMessage, sAssistant) {
   }
 }
 
-// Define a function to wait for a run to complete
 async function waitForRunComplete(sThreadId, sRunId) {
   while (true) {
     const oRun = await openai.beta.threads.runs.retrieve(sThreadId, sRunId)
-    if (
-      oRun.status &&
-      (oRun.status === 'completed' ||
-        oRun.status === 'failed' ||
-        oRun.status === 'requires_action')
-    ) {
-      break // Exit loop if run is completed, failed, or requires action
+    if (oRun.status && (oRun.status === 'completed' || oRun.status === 'failed' || oRun.status === 'requires_action')) {
+      break
     }
-    // Delay the next check to avoid high frequency polling
-    await new Promise(resolve => setTimeout(resolve, 1000)) // 1-second delay
+    await new Promise(resolve => setTimeout(resolve, 1000))
   }
 }
 
