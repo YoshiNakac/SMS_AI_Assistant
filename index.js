@@ -9,6 +9,12 @@ app.use(cookieParser());
 // Load environment variables from the .env file
 require('dotenv').config()
 
+// Initialize Supabase
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+
+
 // Middleware to parse JSON bodies in requests
 app.use(express.json())
 // Middleware to parse URL-encoded bodies (as sent by HTML forms)
@@ -81,33 +87,59 @@ app.post('/whatsAppIncomingMessage', async (req, res) => {
 
 // Define a route for handling incoming SMS messages from Twilio
 app.post('/smsIncomingMessage', async (req, res) => {
-  const twiml = new MessagingResponse(); // Twilio Messaging Response
-  const body = req.body; // Incoming message body
+  const body = req.body;
+  const phoneNumber = body.From;
+  const messageBody = body.Body;
 
-  console.log(req.body); // For debugging purposes, log the incoming message body
+  // Check if there's an existing thread for this phone number
+  let { data: thread, error } = await supabase
+    .from('threads')
+    .select('*')
+    .eq('phone_number', phoneNumber)
+    .single();
 
-  const incomingMessage = body.Body; // Text of the incoming message
-  const cookies = req.cookies; // Check for cookies
-  let sThread = '';
-
-  if (cookies && cookies.sThread) {
-    sThread = cookies.sThread;
+  // If no thread exists, create a new one
+  if (!thread) {
+    let { data: newThread, error: threadError } = await supabase
+      .from('threads')
+      .insert([{ phone_number: phoneNumber }])
+      .select()
+      .single();
+    thread = newThread;
   }
 
-  // Call the runAssistant function to get a response from OpenAI Assistant
-  let oAssistantResponce = await runAssistant(
-    sThread,
-    incomingMessage,
-    process.env['assistant_id'] // Pass the assistant_id from .env
-  );
+  // Log the incoming message in the "messages" table
+  await supabase.from('messages').insert([
+    {
+      thread_id: thread.id,
+      phone_number: phoneNumber,
+      message_body: messageBody,
+      message_type: 'incoming'
+    }
+  ]);
 
+  // Generate response (e.g., from OpenAI)
+  const responseMessage = "Your chatbot's generated response";
+
+  // Log the response in the "messages" table
+  await supabase.from('messages').insert([
+    {
+      thread_id: thread.id,
+      phone_number: phoneNumber,
+      message_body: responseMessage,
+      message_type: 'outgoing'
+    }
+  ]);
+
+  // Send response via Twilio
+  const twiml = new MessagingResponse();
   const message = twiml.message();
-  message.body(oAssistantResponce.threadMessages.data[0].content[0].text.value);
-
-  res.cookie('sThread', oAssistantResponce.sThread, ['Path=/']);
+  message.body(responseMessage);
   res.writeHead(200, { 'Content-Type': 'text/xml' });
-  res.status(200).end(twiml.toString());
+  res.end(twiml.toString());
 });
+
+
 
 
 /*
