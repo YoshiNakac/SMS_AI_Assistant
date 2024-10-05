@@ -7,7 +7,7 @@ serve(async (req) => {
   const { thread_id, phone_number, message_body, message_type } = await req.json()
 
   // Make the HTTP request to the Zapier webhook
-  const webhookUrl = 'https://hooks.zapier.com/hooks/catch/8456939/2mzjay1/';
+  const webhookUrl = process.env.ZAPIER_WEBHOOK_URL;
   const response = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
