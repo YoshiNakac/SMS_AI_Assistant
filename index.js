@@ -1,210 +1,140 @@
 // Import necessary libraries
-const express = require('express') // Express framework for building web applications
-const app = express() // Initialize an Express application
-const port = 3000 // Define the port number on which the server will listen
-const MessagingResponse = require('twilio').twiml.MessagingResponse; // Import the MessagingResponse module from the 'twilio' package
-const cookieParser = require('cookie-parser') // Import and use the cookie-parser middleware
+const express = require('express'); // Express framework for building web applications
+const app = express(); // Initialize an Express application
+const port = 3000; // Define the port number on which the server will listen
+const { MessagingResponse } = require('twilio').twiml; // Import the MessagingResponse module from the 'twilio' package
+const cookieParser = require('cookie-parser'); // Import and use the cookie-parser middleware
+const { createClient } = require('@supabase/supabase-js'); // Supabase Client
+const TwilioClient = require('twilio').Twilio; // Twilio Client for sending messages
+const dotenv = require('dotenv'); // Load environment variables
+const cors = require('cors'); // Enable CORS
+const axios = require('axios'); // For making requests (Zapier)
+dotenv.config(); // Load environment variables from the .env file
+
 app.use(cookieParser());
+app.use(express.json()); // Middleware to parse JSON bodies in requests
+app.use(express.urlencoded({ extended: true })); // Middleware to parse URL-encoded bodies (as sent by HTML forms))
+app.use(cors()); // Enable CORS
 
-// Load environment variables from the .env file
-require('dotenv').config()
-
-// Initialize Supabase
-const { createClient } = require('@supabase/supabase-js');
-
+// Supabase Client Initialization
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
+// Twilio Client Initialization
+const twilioClient = new TwilioClient(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// Middleware to parse JSON bodies in requests
-app.use(express.json())
-// Middleware to parse URL-encoded bodies (as sent by HTML forms)
-app.use(
-  express.urlencoded({
-    extended: true
-  })
-)
-
-/*
-// Import the ngrok package
-const ngrok = require('ngrok');
-
-// Anonymous async function to set up ngrok tunnel
-(async function () {
-  // Use ngrok to establish a tunnel to the specified port
-  const url = await ngrok.connect({ authtoken: process.env['ngrokToken'], addr: port });
-  // Log the ngrok-generated public URL to the console
-  console.log('Ngrok Tunnel is established. Public URL:', url);
-})();
-*/
-
-
-// Import the OpenAI library
-const OpenAI = require('openai')
-// Create an OpenAI client with the API key from the .env file
-const openai = new OpenAI({
-  apiKey: process.env['OPENAI_API_KEY']
-})
-
-// Define a route for the root URL '/'
+// Default route to test the server
 app.get('/', (req, res) => {
-  res.send('Hello World!'); // Send a response when the root URL is accessed
+  res.send('Server is running!'); // Send a response when the root URL is accessed
 });
 
-
-/*
-// Define a route for handling incoming WhatsApp messages
-app.post('/whatsAppIncomingMessage', async (req, res) => {
-  const twiml = new MessagingResponse() // Twilio Messaging Response
-  const body = req.body // Incoming message body
-
-  console.log(req.body);
-
-
-
-  const incomingMessage = body.Body // Text of the incoming message
-  const cookies = req.cookies // Check for cookies
-  let sThread = ''
-
-  if (cookies && cookies.sThread) {
-    sThread = cookies.sThread
-  }
-
-  // Call the runAssistant function to get a response from OpenAI Assistant
-  let oAssistantResponce = await runAssistant(
-    sThread,
-    incomingMessage,
-    process.env['assistant_id'] // Pass the assistant_id from .env
-  )
-
-  const message = twiml.message()
-  message.body(oAssistantResponce.threadMessages.data[0].content[0].text.value)
-
-  res.cookie('sThread', oAssistantResponce.sThread, ['Path=/']);
-  res.writeHead(200, { 'Content-Type': 'text/xml' });
-  res.status(200).end(twiml.toString());
-})
-*/
-
-// Define a route for handling incoming SMS messages from Twilio
+// Receive incoming SMS messages from Twilio
 app.post('/smsIncomingMessage', async (req, res) => {
-  const contentType = req.headers['content-type'];
+  const { Body: messageBody, From: phoneNumber } = req.body;
 
-  let body;
-  if (contentType.includes('application/json')) {
-    // Parse JSON body
-    body = req.body;
-  } else if (contentType.includes('application/x-www-form-urlencoded')) {
-    // Parse URL-encoded body
-    body = req.body;
-  }
-
-  const phoneNumber = body.From;
-  const messageBody = body.Body;
-
-  // Continue with your existing logic for Supabase
-  let { data: thread, error } = await supabase
-    .from('threads')
-    .select('*')
-    .eq('phone_number', phoneNumber)
-    .single();
-
-  if (!thread) {
-    let { data: newThread, error: threadError } = await supabase
-      .from('threads')
-      .insert([{ phone_number: phoneNumber }])
-      .select()
+  try {
+    // Check if there's an existing conversation
+    let { data: conversation, error } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('phone_number', phoneNumber)
       .single();
-    thread = newThread;
-  }
 
-  await supabase.from('messages').insert([
-    {
-      thread_id: thread.id,
+    let conversation_id;
+
+    // If no conversation exists, create one
+    if (!conversation) {
+      let { data: newConversation, error: conversationError } = await supabase
+        .from('conversations')
+        .insert([{ phone_number: phoneNumber }])
+        .select()
+        .single();
+      conversation_id = newConversation.id;
+    } else {
+      conversation_id = conversation.id;
+    }
+
+    // Log the incoming message in the "messages" table
+    await supabase.from('messages').insert({
+      conversation_id,
       phone_number: phoneNumber,
       message_body: messageBody,
-      message_type: 'incoming'
-    }
-  ]);
+      message_type: 'inbound',
+    });
 
-  const responseMessage = "Your chatbot's generated response";
-  
-  await supabase.from('messages').insert([
-    {
-      thread_id: thread.id,
+    // Generate response (placeholder for now, can integrate OpenAI or custom logic)
+    const responseMessage = "Thank you for your message. We'll get back to you shortly.";
+
+    // Log the outgoing response in the "messages" table
+    await supabase.from('messages').insert({
+      conversation_id,
       phone_number: phoneNumber,
       message_body: responseMessage,
-      message_type: 'outgoing'
-    }
-  ]);
+      message_type: 'outbound',
+    });
 
-  const twiml = new MessagingResponse();
-  const message = twiml.message();
-  message.body(responseMessage);
-  res.writeHead(200, { 'Content-Type': 'text/xml' });
-  res.end(twiml.toString());
+    // Send response back via Twilio
+    const twiml = new MessagingResponse();
+    const message = twiml.message();
+    message.body(responseMessage);
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml.toString());
+
+  } catch (error) {
+    console.error('Error handling incoming message:', error);
+    res.status(500).send({ error: 'Failed to process incoming message' });
+  }
 });
 
+// Send a message using Zapier and OpenPhone
+app.post('/send_message_zapier', async (req, res) => {
+  const { user_number, message_body } = req.body;
 
+  try {
+    // Find conversation based on phone number
+    let { data: conversation, error } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('phone_number', user_number)
+      .single();
 
-
-
-/*
-// Define an endpoint to create a new assistant
-app.post('/createAssistant', async (req, res) => {
-  const assistant = await openai.beta.assistants.create({
-    name: 'Melody Maker',
-    description: 'A versatile lyricist for all music genres, inspiring creativity',
-    model: 'gpt-4',
-    instructions: 'Melody Maker is a creative assistant specialized in songwriting...',
-    tools: []
-  })
-
-  res.send(assistant)
-})
-*/
-
-// Add an endpoint to run the assistant
-app.post('/runAssistant', async (req, res) => {
-  let body = req.body
-  let oResp = runAssistant(body.sThread, body.sMessage, body.sAssistant)
-  res.send(oResp)
-})
-
-async function runAssistant(sThread, sMessage, sAssistant) {
-  if (!sThread) {
-    let oThread = await openai.beta.threads.create()
-    sThread = oThread.id
-  }
-
-  await openai.beta.threads.messages.create(sThread, {
-    role: 'user',
-    content: sMessage
-  })
-
-  let run = await openai.beta.threads.runs.create(sThread, {
-    assistant_id: sAssistant
-  })
-
-  await waitForRunComplete(sThread, run.id)
-  const threadMessages = await openai.beta.threads.messages.list(sThread)
-
-  return {
-    threadMessages: threadMessages,
-    sThread: sThread
-  }
-}
-
-async function waitForRunComplete(sThreadId, sRunId) {
-  while (true) {
-    const oRun = await openai.beta.threads.runs.retrieve(sThreadId, sRunId)
-    if (oRun.status && (oRun.status === 'completed' || oRun.status === 'failed' || oRun.status === 'requires_action')) {
-      break
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
     }
-    await new Promise(resolve => setTimeout(resolve, 1000))
+
+    const conversation_id = conversation.id;
+
+    // Create payload for Zapier (for OpenPhone)
+    const payload = {
+      user_number,
+      message_body,
+      from: process.env.OPENPHONE_NUMBER // Ensure your OpenPhone number is set in .env
+    };
+
+    // Send request to Zapier webhook, which sends via OpenPhone
+    const zapierWebhookUrl = process.env.ZAPIER_WEBHOOK_URL;
+    const zapierResponse = await axios.post(zapierWebhookUrl, payload);
+
+    if (zapierResponse.status !== 200) {
+      return res.status(zapierResponse.status).json({ error: 'Failed to send message via OpenPhone' });
+    }
+
+    // Log the outgoing message in Supabase
+    await supabase.from('messages').insert({
+      conversation_id,
+      phone_number: user_number,
+      message_body,
+      message_type: 'outbound',
+    });
+
+    res.json({ response: 'Message sent successfully via OpenPhone (Zapier)' });
+
+  } catch (error) {
+    console.error('Error sending message via OpenPhone (Zapier):', error);
+    res.status(500).json({ error: 'Failed to send message via OpenPhone (Zapier)' });
   }
-}
+});
 
 // Start the server and listen on the specified port
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+  console.log(`App running on port ${port}`);
+});
