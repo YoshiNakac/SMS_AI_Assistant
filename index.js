@@ -87,18 +87,27 @@ app.post('/whatsAppIncomingMessage', async (req, res) => {
 
 // Define a route for handling incoming SMS messages from Twilio
 app.post('/smsIncomingMessage', async (req, res) => {
-  const body = req.body;
+  const contentType = req.headers['content-type'];
+
+  let body;
+  if (contentType.includes('application/json')) {
+    // Parse JSON body
+    body = req.body;
+  } else if (contentType.includes('application/x-www-form-urlencoded')) {
+    // Parse URL-encoded body
+    body = req.body;
+  }
+
   const phoneNumber = body.From;
   const messageBody = body.Body;
 
-  // Check if there's an existing thread for this phone number
+  // Continue with your existing logic for Supabase
   let { data: thread, error } = await supabase
     .from('threads')
     .select('*')
     .eq('phone_number', phoneNumber)
     .single();
 
-  // If no thread exists, create a new one
   if (!thread) {
     let { data: newThread, error: threadError } = await supabase
       .from('threads')
@@ -108,7 +117,6 @@ app.post('/smsIncomingMessage', async (req, res) => {
     thread = newThread;
   }
 
-  // Log the incoming message in the "messages" table
   await supabase.from('messages').insert([
     {
       thread_id: thread.id,
@@ -118,10 +126,8 @@ app.post('/smsIncomingMessage', async (req, res) => {
     }
   ]);
 
-  // Generate response (e.g., from OpenAI)
   const responseMessage = "Your chatbot's generated response";
-
-  // Log the response in the "messages" table
+  
   await supabase.from('messages').insert([
     {
       thread_id: thread.id,
@@ -131,13 +137,13 @@ app.post('/smsIncomingMessage', async (req, res) => {
     }
   ]);
 
-  // Send response via Twilio
   const twiml = new MessagingResponse();
   const message = twiml.message();
   message.body(responseMessage);
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.end(twiml.toString());
 });
+
 
 
 
