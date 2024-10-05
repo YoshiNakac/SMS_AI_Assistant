@@ -18,6 +18,7 @@ app.use(
   })
 )
 
+/*
 // Import the ngrok package
 const ngrok = require('ngrok');
 
@@ -28,6 +29,8 @@ const ngrok = require('ngrok');
   // Log the ngrok-generated public URL to the console
   console.log('Ngrok Tunnel is established. Public URL:', url);
 })();
+*/
+
 
 // Import the OpenAI library
 const OpenAI = require('openai')
@@ -42,7 +45,7 @@ app.get('/', (req, res) => {
 });
 
 
-
+/*
 // Define a route for handling incoming WhatsApp messages
 app.post('/whatsAppIncomingMessage', async (req, res) => {
   const twiml = new MessagingResponse() // Twilio Messaging Response
@@ -74,7 +77,40 @@ app.post('/whatsAppIncomingMessage', async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.status(200).end(twiml.toString());
 })
+*/
 
+// Define a route for handling incoming SMS messages from Twilio
+app.post('/smsIncomingMessage', async (req, res) => {
+  const twiml = new MessagingResponse(); // Twilio Messaging Response
+  const body = req.body; // Incoming message body
+
+  console.log(req.body); // For debugging purposes, log the incoming message body
+
+  const incomingMessage = body.Body; // Text of the incoming message
+  const cookies = req.cookies; // Check for cookies
+  let sThread = '';
+
+  if (cookies && cookies.sThread) {
+    sThread = cookies.sThread;
+  }
+
+  // Call the runAssistant function to get a response from OpenAI Assistant
+  let oAssistantResponce = await runAssistant(
+    sThread,
+    incomingMessage,
+    process.env['assistant_id'] // Pass the assistant_id from .env
+  );
+
+  const message = twiml.message();
+  message.body(oAssistantResponce.threadMessages.data[0].content[0].text.value);
+
+  res.cookie('sThread', oAssistantResponce.sThread, ['Path=/']);
+  res.writeHead(200, { 'Content-Type': 'text/xml' });
+  res.status(200).end(twiml.toString());
+});
+
+
+/*
 // Define an endpoint to create a new assistant
 app.post('/createAssistant', async (req, res) => {
   const assistant = await openai.beta.assistants.create({
@@ -87,6 +123,7 @@ app.post('/createAssistant', async (req, res) => {
 
   res.send(assistant)
 })
+*/
 
 // Add an endpoint to run the assistant
 app.post('/runAssistant', async (req, res) => {
