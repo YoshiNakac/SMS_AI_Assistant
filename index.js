@@ -2,12 +2,11 @@
 const express = require('express'); // Express framework for building web applications
 const app = express(); // Initialize an Express application
 const port = 3000; // Define the port number on which the server will listen
-const { MessagingResponse } = require('twilio').twiml; // Import the MessagingResponse module from the 'twilio' package
 const cookieParser = require('cookie-parser'); // Import and use the cookie-parser middleware
 const { createClient } = require('@supabase/supabase-js'); // Supabase Client
-const TwilioClient = require('twilio').Twilio; // Twilio Client for sending messages
 const dotenv = require('dotenv'); // Load environment variables
 const cors = require('cors'); // Enable CORS
+const axios = require('axios'); // For making requests (Zapier)
 const OpenAI = require('openai'); // OpenAI API for generating responses
 
 dotenv.config(); // Load environment variables from the .env file
@@ -19,9 +18,6 @@ app.use(cors()); // Enable CORS
 
 // Supabase Client Initialization
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-
-// Twilio Client Initialization
-const twilioClient = new TwilioClient(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 // OpenAI Client Initialization
 const openai = new OpenAI({
@@ -98,12 +94,22 @@ app.post('/smsIncomingMessage', async (req, res) => {
       message_type: 'outbound',
     });
 
-    // Send response back via Twilio
-    const twiml = new MessagingResponse();
-    const message = twiml.message();
-    message.body(responseMessage);
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(twiml.toString());
+    // Send the response message via OpenPhone using Zapier
+    const zapierWebhookUrl = process.env.ZAPIER_WEBHOOK_URL;
+    const payload = {
+      user_number: phoneNumber,
+      message_body: responseMessage,
+      from: process.env.OPENPHONE_NUMBER // Ensure your OpenPhone number is set in .env
+    };
+
+    const zapierResponse = await axios.post(zapierWebhookUrl, payload);
+
+    if (zapierResponse.status !== 200) {
+      console.error('Failed to send message via OpenPhone:', zapierResponse.status);
+      return res.status(500).json({ error: 'Failed to send message via OpenPhone' });
+    }
+
+    res.json({ response: 'Message sent successfully via OpenPhone' });
 
   } catch (error) {
     console.error('Error handling incoming message:', error);
