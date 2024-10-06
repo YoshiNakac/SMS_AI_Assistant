@@ -8,7 +8,6 @@ const { createClient } = require('@supabase/supabase-js'); // Supabase Client
 const TwilioClient = require('twilio').Twilio; // Twilio Client for sending messages
 const dotenv = require('dotenv'); // Load environment variables
 const cors = require('cors'); // Enable CORS
-const axios = require('axios'); // For making requests (Zapier)
 const OpenAI = require('openai'); // OpenAI API for generating responses
 
 dotenv.config(); // Load environment variables from the .env file
@@ -42,13 +41,13 @@ app.post('/smsIncomingMessage', async (req, res) => {
     // Check if there's an existing thread based on phone number
     let { data: thread, error } = await supabase
       .from('threads')
-      .select('id')
+      .select('id, openai_thread_id') // Select both Supabase thread ID and OpenAI thread ID
       .eq('phone_number', phoneNumber)
       .single();
 
-    let thread_id;
+    let thread_id, openai_thread_id;
 
-    // If no thread exists, create one
+    // If no thread exists, create one in Supabase and OpenAI
     if (!thread) {
       let { data: newThread, error: threadError } = await supabase
         .from('threads')
@@ -60,10 +59,22 @@ app.post('/smsIncomingMessage', async (req, res) => {
         console.error('Error creating new thread:', threadError);
         return res.status(500).send({ error: 'Failed to create new thread' });
       }
-      
+
       thread_id = newThread.id;
+
+      // Create a new OpenAI thread for this conversation
+      let oThread = await openai.beta.threads.create();
+      openai_thread_id = oThread.id;
+
+      // Update Supabase with the OpenAI thread ID
+      await supabase
+        .from('threads')
+        .update({ openai_thread_id: openai_thread_id })
+        .eq('id', thread_id);
     } else {
+      // Use existing thread IDs
       thread_id = thread.id;
+      openai_thread_id = thread.openai_thread_id;
     }
 
     // Log the incoming message in the "messages" table
@@ -74,8 +85,8 @@ app.post('/smsIncomingMessage', async (req, res) => {
       message_type: 'inbound',
     });
 
-    // Generate a response using the OpenAI Assistant
-    const openaiResponse = await runAssistant(thread_id, messageBody, process.env.assistant_id); // Using your assistant_id
+    // Generate a response using the OpenAI Assistant with the correct OpenAI thread ID
+    const openaiResponse = await runAssistant(openai_thread_id, messageBody, process.env.assistant_id);
 
     const responseMessage = openaiResponse.threadMessages.data[0].content[0].text.value;
 
@@ -101,40 +112,34 @@ app.post('/smsIncomingMessage', async (req, res) => {
 });
 
 // Function to run the OpenAI Assistant
-async function runAssistant(sThread, sMessage, sAssistant) {
-  // Check if it's a new conversation or an existing thread
-  if (!sThread) {
-    let oThread = await openai.beta.threads.create();
-    sThread = oThread.id;
-  }
-
-  // Add a message to the thread
-  await openai.beta.threads.messages.create(sThread, {
+async function runAssistant(openai_thread_id, messageBody, assistant_id) {
+  // Add a message to the OpenAI thread
+  await openai.beta.threads.messages.create(openai_thread_id, {
     role: 'user',
-    content: sMessage
+    content: messageBody
   });
 
-  // Run the assistant with the provided thread
-  let run = await openai.beta.threads.runs.create(sThread, {
-    assistant_id: sAssistant
+  // Run the assistant with the provided OpenAI thread
+  let run = await openai.beta.threads.runs.create(openai_thread_id, {
+    assistant_id: assistant_id
   });
 
   // Wait for the run to complete
-  await waitForRunComplete(sThread, run.id);
+  await waitForRunComplete(openai_thread_id, run.id);
 
-  // Retrieve messages from the thread
-  const threadMessages = await openai.beta.threads.messages.list(sThread);
+  // Retrieve messages from the OpenAI thread
+  const threadMessages = await openai.beta.threads.messages.list(openai_thread_id);
 
   return {
     threadMessages: threadMessages,
-    sThread: sThread
+    openai_thread_id: openai_thread_id
   };
 }
 
 // Helper function to wait for the assistant run to complete
-async function waitForRunComplete(sThreadId, sRunId) {
+async function waitForRunComplete(openai_thread_id, sRunId) {
   while (true) {
-    const oRun = await openai.beta.threads.runs.retrieve(sThreadId, sRunId);
+    const oRun = await openai.beta.threads.runs.retrieve(openai_thread_id, sRunId);
     if (
       oRun.status &&
       (oRun.status === 'completed' || oRun.status === 'failed' || oRun.status === 'requires_action')
@@ -144,55 +149,6 @@ async function waitForRunComplete(sThreadId, sRunId) {
     await new Promise(resolve => setTimeout(resolve, 1000)); // 1-second delay
   }
 }
-
-// Send a message using Zapier and OpenPhone
-app.post('/send_message_zapier', async (req, res) => {
-  const { user_number, message_body } = req.body;
-
-  try {
-    // Find thread based on phone number
-    let { data: thread, error } = await supabase
-      .from('threads')
-      .select('id')
-      .eq('phone_number', user_number)
-      .single();
-
-    if (!thread) {
-      return res.status(404).json({ error: 'Thread not found' });
-    }
-
-    const thread_id = thread.id;
-
-    // Create payload for Zapier (for OpenPhone)
-    const payload = {
-      user_number,
-      message_body,
-      from: process.env.OPENPHONE_NUMBER // Ensure your OpenPhone number is set in .env
-    };
-
-    // Send request to Zapier webhook, which sends via OpenPhone
-    const zapierWebhookUrl = process.env.ZAPIER_WEBHOOK_URL;
-    const zapierResponse = await axios.post(zapierWebhookUrl, payload);
-
-    if (zapierResponse.status !== 200) {
-      return res.status(zapierResponse.status).json({ error: 'Failed to send message via OpenPhone' });
-    }
-
-    // Log the outgoing message in Supabase
-    await supabase.from('messages').insert({
-      thread_id,
-      phone_number: user_number,
-      message_body,
-      message_type: 'outbound',
-    });
-
-    res.json({ response: 'Message sent successfully via OpenPhone (Zapier)' });
-
-  } catch (error) {
-    console.error('Error sending message via OpenPhone (Zapier):', error);
-    res.status(500).json({ error: 'Failed to send message via OpenPhone (Zapier)' });
-  }
-});
 
 // Start the server and listen on the specified port
 app.listen(port, () => {
