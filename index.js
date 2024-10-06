@@ -24,12 +24,23 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY // Ensure you have your OpenAI API key in .env
 });
 
+// Helper function to split long messages into chunks
+function splitMessage(message, maxLength = 1600) {
+  const messageParts = [];
+  
+  for (let i = 0; i < message.length; i += maxLength) {
+    messageParts.push(message.substring(i, i + maxLength));
+  }
+
+  return messageParts;
+}
+
 // Default route to test the server
 app.get('/', (req, res) => {
   res.send('Server is running!'); // Send a response when the root URL is accessed
 });
 
-// Handle incoming messages from OpenPhone (via Zapier) and generate response with OpenAI
+// Receive incoming SMS messages from OpenPhone (via Zapier) and generate response with OpenAI
 app.post('/openphoneInbound', async (req, res) => {
   const { message_body, phone_number } = req.body;
 
@@ -94,23 +105,34 @@ app.post('/openphoneInbound', async (req, res) => {
       message_type: 'outbound',
     });
 
-    // Send the response message via OpenPhone using Zapier
-    const zapierWebhookUrl = process.env.ZAPIER_WEBHOOK_URL;
-    const payload = {
-      user_number: phone_number,
-      message_body: responseMessage,
-      from: process.env.OPENPHONE_NUMBER // Ensure your OpenPhone number is set in .env
-    };
+    // Split the response message into chunks if necessary
+    const messageChunks = splitMessage(responseMessage);
 
-    const zapierResponse = await axios.post(zapierWebhookUrl, payload);
+    // Send each chunk as a separate message via OpenPhone using Zapier
+    for (const chunk of messageChunks) {
+      // Log the payload and webhook URL before sending to Zapier
+      const zapierWebhookUrl = process.env.ZAPIER_WEBHOOK_URL;
+      const payload = {
+        user_number: phone_number,
+        message_body: chunk,
+        from: process.env.OPENPHONE_NUMBER // Ensure your OpenPhone number is set in .env
+      };
 
-    if (zapierResponse.status !== 200) {
-      console.error('Failed to send message via OpenPhone:', zapierResponse.status);
-      return res.status(500).json({ error: 'Failed to send message via OpenPhone' });
+      console.log('Payload to Zapier:', payload);
+      console.log('Zapier webhook URL:', zapierWebhookUrl);
+
+      const zapierResponse = await axios.post(zapierWebhookUrl, payload);
+
+      if (zapierResponse.status !== 200) {
+        console.error('Failed to send message via OpenPhone:', zapierResponse.status);
+        return res.status(500).json({ error: 'Failed to send message via OpenPhone' });
+      }
+
+      console.log('Chunk sent:', chunk);
     }
 
     // Respond back to Zapier
-    res.json({ response: 'Message sent successfully via OpenPhone and logged in database.' });
+    res.json({ response: 'Message sent successfully via OpenPhone and logged in the database.' });
 
   } catch (error) {
     console.error('Error handling incoming message:', error);
