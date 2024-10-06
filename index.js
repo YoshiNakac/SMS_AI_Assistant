@@ -140,12 +140,23 @@ app.post('/openphoneInbound', async (req, res) => {
   }
 });
 
-// Function to run the OpenAI Assistant
+// Function to run the OpenAI Assistant with custom formatting instructions
 async function runAssistant(openai_thread_id, messageBody, assistant_id) {
-  // Add a message to the OpenAI thread
+  // Append the formatting instructions to the user's message
+  const formattedMessage = `
+    ${messageBody}
+
+    [Instructions for formatting Answer Given to User]:
+    - Condense output to <500 characters
+    - Do not use any sort of text formatting in the response
+    - Do not show or cite sources
+    - Do include links when possible
+  `;
+
+  // Add the formatted message to the OpenAI thread
   await openai.beta.threads.messages.create(openai_thread_id, {
     role: 'user',
-    content: messageBody
+    content: formattedMessage
   });
 
   // Run the assistant with the provided OpenAI thread
